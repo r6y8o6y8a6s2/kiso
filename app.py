@@ -1,45 +1,328 @@
-import math
+import random
+import re
+from datetime import date, datetime
 import streamlit as st
 
-st.title("⚾ プロ野球・打率計算アプリ")
-st.write("打数と安打数を入力すると、自動で打率を計算します。")
-
-# 入力フォーム
-at_bats = st.number_input("打数 (at bat) を入力してください", min_value=0, value=30)
-hits = st.number_input("安打数 (hits) を入力してください", min_value=0, value=10)
-
-# 【追加】目標打率の入力欄
-target_avg = st.number_input(
-    "目標打率を入力してください (例: 0.300)",
-    min_value=0.000,
-    max_value=1.000,
-    value=0.300,
-    format="%.3f",
+st.set_page_config(
+    page_title="日本の世界遺産検定 4択マスター",
+    page_icon="🏛️",
+    layout="centered",
 )
 
-if at_bats > 0:
-    # 現在の打率計算
-    batting_avg = hits / at_bats
-    st.write(f"### 現在の打率: {batting_avg:.3f}")
+# --- CSSスタイル定義 ---
+st.markdown("""
+<style>
+    .trivia-box {
+        background-color: #f0f7ff;
+        border-left: 5px solid #0d6efd;
+        padding: 14px 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        color: #111827;
+    }
+    .correct-box {
+        background-color: #d1e7dd;
+        border-left: 5px solid #198754;
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        color: #0f5132;
+    }
+    .incorrect-box {
+        background-color: #f8d7da;
+        border-left: 5px solid #dc3545;
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        color: #842029;
+    }
+    .explanation-box {
+        background-color: #e7f1ff;
+        border-left: 5px solid #084298;
+        padding: 14px 16px;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        color: #052c65;
+    }
+    .pass-banner {
+        background-color: #d1e7dd;
+        border: 2px solid #198754;
+        padding: 18px;
+        border-radius: 10px;
+        text-align: center;
+        color: #0f5132;
+        margin-bottom: 16px;
+    }
+    .fail-banner {
+        background-color: #fff3cd;
+        border: 2px solid #ffc107;
+        padding: 18px;
+        border-radius: 10px;
+        text-align: center;
+        color: #664d03;
+        margin-bottom: 16px;
+    }
+    /* 選択肢ボタンの箱を大きくし、長文でも折り返して収まるように調整 */
+    div.stButton > button {
+        min-height: 64px;
+        height: auto !important;
+        padding: 14px 18px !important;
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        line-height: 1.5 !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+    }
+    div.stButton > button p {
+        font-size: 1.05rem !important;
+        margin: 0 !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-    # 打率に応じた評価コメント
-    if batting_avg >= 0.300:
-        st.write("🎉 素晴らしい！3割打者（クリーンナップ級）です！")
-    elif batting_avg >= 0.250:
-        st.write("👍 ナイスバッティング！レギュラー級の成績です！")
+# ここに問題を追加してください
+QUIZ_DATA = [
+      {
+    "question": "「北海道・北東北の縄文遺跡群」に関する次の記述のうち、正しいものはどれか。",
+    "options": [
+      "① 2021年に登録された文化遺産で、構成資産は17の考古遺跡からなる。",
+      "② 岩手県、宮城県、秋田県、青森県の4県に位置する。",
+      "③ 農耕社会への移行と定着の過程を示す資産である。",
+      "④ 登録基準は（i）（iv）が適用されている。"
+    ],
+    "answer": "① 2021年に登録された文化遺産で、構成資産は17の考古遺跡からなる。",
+    "explanation": "正解は①です。「北海道・北東北の縄文遺跡群」は2021年に登録された文化遺産で、北海道・青森県・岩手県・秋田県の17の考古遺跡で構成されています[cite: 22]。②は宮城県ではなく北海道[cite: 22]、③は農耕社会以前（狩猟・漁労・採集による定住）[cite: 22]、④は登録基準（iii）（v）が正しい内容です[cite: 22]。",
+    "tag": "登録年: 2021年 / 基準(iii)(v) / 北海道・北東北の縄文遺跡群",
+    "trivia": "縄文時代は紀元前13000年から前400年の長期にわたり、定住の開始・発展・成熟の過程が6つのステージに区分されています[cite: 22, 23]。"
+  }
+      ]
+
+# --- ヘルパー関数：選択肢のシャッフル ---
+def prepare_quiz_session(questions_list):
+    prepared = []
+    for q in questions_list:
+        q_copy = q.copy()
+        clean_options = [re.sub(r'^[①②③④]\s*', '', opt) for opt in q_copy["options"]]
+        clean_answer = re.sub(r'^[①②③④]\s*', '', q_copy["answer"])
+
+        random.shuffle(clean_options)
+
+        prefixes = ["①", "②", "③", "④"]
+        new_options = []
+        new_answer = ""
+        for idx, text in enumerate(clean_options):
+            labeled_opt = f"{prefixes[idx]} {text}"
+            new_options.append(labeled_opt)
+            if text == clean_answer:
+                new_answer = labeled_opt
+
+        q_copy["options"] = new_options
+        q_copy["answer"] = new_answer
+        prepared.append(q_copy)
+    return prepared
+
+
+def start_quiz(questions, mode_label, is_mock_exam=False):
+    quiz_list = questions.copy()
+    random.shuffle(quiz_list)
+    st.session_state.shuffled_quiz = prepare_quiz_session(quiz_list)
+    st.session_state.app_mode = "quiz"
+    st.session_state.mode_label = mode_label
+    st.session_state.is_mock_exam = is_mock_exam
+    st.session_state.current_q = 0
+    st.session_state.score = 0
+    st.session_state.wrong_questions = []
+    st.session_state.quiz_results_log = []
+    st.session_state.answered = False
+    st.session_state.selected_option = None
+    st.session_state.history_recorded = False
+
+
+# --- セッション状態の初期化 ---
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = "home"
+if "shuffled_quiz" not in st.session_state:
+    st.session_state.shuffled_quiz = []
+if "current_q" not in st.session_state:
+    st.session_state.current_q = 0
+if "score" not in st.session_state:
+    st.session_state.score = 0
+if "answered" not in st.session_state:
+    st.session_state.answered = False
+if "selected_option" not in st.session_state:
+    st.session_state.selected_option = None
+if "wrong_questions" not in st.session_state:
+    st.session_state.wrong_questions = []
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "mode_label" not in st.session_state:
+    st.session_state.mode_label = ""
+if "is_mock_exam" not in st.session_state:
+    st.session_state.is_mock_exam = False
+if "quiz_results_log" not in st.session_state:
+    st.session_state.quiz_results_log = []
+if "forgetting_curve_log" not in st.session_state:
+    st.session_state.forgetting_curve_log = {}
+if "study_dates" not in st.session_state:
+    st.session_state.study_dates = {str(date.today())}
+
+# タイトル
+st.markdown('<h2 style="font-size: 1.8rem;">🏛️ 日本の遺産検定 4択マスター</h2>', unsafe_allow_html=True)
+st.markdown("---")
+
+# ==========================================
+# 1. ホーム画面
+# ==========================================
+if st.session_state.app_mode == "home":
+    if "daily_trivia" not in st.session_state:
+        st.session_state.daily_trivia = random.choice(QUIZ_DATA)
+
+    dt = st.session_state.daily_trivia
+    st.markdown(f"""
+        <div class="trivia-box">
+            <b>💡 本日の世界遺産トリビア</b><br>
+            {dt['trivia']}
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.subheader("🎯 学習メニューを選択")
+
+    if st.button(f"🎓 本番模擬試験をスタート（全{len(QUIZ_DATA)}問）", type="primary", use_container_width=True):
+        start_quiz(QUIZ_DATA, "🎓 本番模擬試験モード（合格ライン70%）", is_mock_exam=True)
+        st.rerun()
+
+    st.write("")
+    col1, col2 = st.columns(2)
+    with col1:
+        wrong_count = len(st.session_state.wrong_questions)
+        if st.button(f"❌ 間違い復習 ({wrong_count}問)", disabled=(wrong_count == 0), use_container_width=True):
+            start_quiz(st.session_state.wrong_questions, "🔄 間違い復習モード", is_mock_exam=False)
+            st.rerun()
+
+    with col2:
+        fc_due_list = [q for q in QUIZ_DATA if q["question"] in st.session_state.forgetting_curve_log]
+        if st.button(f"🧠 忘却曲線復習 ({len(fc_due_list)}問)", disabled=(len(fc_due_list) == 0), use_container_width=True):
+            start_quiz(fc_due_list, "🧠 忘却曲線・最適復習モード", is_mock_exam=False)
+            st.rerun()
+
+# ==========================================
+# 2. クイズ・模擬試験プレイ画面
+# ==========================================
+elif st.session_state.app_mode == "quiz":
+    active_quiz = st.session_state.shuffled_quiz
+    st.caption(f"【{st.session_state.mode_label}】")
+
+    if st.session_state.current_q < len(active_quiz):
+        q = active_quiz[st.session_state.current_q]
+
+        st.subheader(f"第{st.session_state.current_q + 1}問 / 全{len(active_quiz)}問")
+        st.markdown(f"**{q['question']}**")
+        st.write("")
+
+        for i, option in enumerate(q["options"]):
+            if st.button(option, key=f"opt_{i}_{st.session_state.current_q}", use_container_width=True, disabled=st.session_state.answered):
+                st.session_state.answered = True
+                st.session_state.selected_option = option
+
+                is_correct = (option[:1] == q["answer"][:1])
+                if is_correct:
+                    st.session_state.score += 1
+                    if q["question"] in st.session_state.forgetting_curve_log:
+                        del st.session_state.forgetting_curve_log[q["question"]]
+                else:
+                    orig_q = next((item for item in QUIZ_DATA if item["question"] == q["question"]), q)
+                    if orig_q not in st.session_state.wrong_questions:
+                        st.session_state.wrong_questions.append(orig_q)
+                    st.session_state.forgetting_curve_log[q["question"]] = str(datetime.now())
+
+                st.session_state.quiz_results_log.append({
+                    "question": q["question"],
+                    "user_answer": option,
+                    "correct_answer": q["answer"],
+                    "is_correct": is_correct,
+                    "explanation": q["explanation"],
+                })
+                st.rerun()
+
+        if st.session_state.answered:
+            st.markdown("---")
+            if st.session_state.selected_option[:1] == q["answer"][:1]:
+                st.markdown('<div class="correct-box">🎉 <b>正解です！</b></div>', unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    f'<div class="incorrect-box">😢 <b>不正解…</b> （あなたの回答: {st.session_state.selected_option}）<br>'
+                    f'正解は <b>{q["answer"]}</b> です。</div>',
+                    unsafe_allow_html=True,
+                )
+
+            st.markdown(f"""
+                <div class="explanation-box">
+                    <b>💡 解説:</b> {q['explanation']}<br><br>
+                    <span style="font-size: 0.9em; background-color: #ffffff; padding: 3px 6px; border-radius: 4px; color: #084298;">📌 <b>検定ポイント:</b> {q['tag']}</span>
+                </div>
+            """, unsafe_allow_html=True)
+
+            if st.button("次の問題へ ➡️", type="primary", use_container_width=True):
+                st.session_state.current_q += 1
+                st.session_state.answered = False
+                st.session_state.selected_option = None
+                st.rerun()
+
+    # ==========================================
+    # 3. 結果発表画面
+    # ==========================================
     else:
-        st.write("💪 もっと練習してレギュラーを奪い返そう！")
+        total_len = len(active_quiz)
+        accuracy = round((st.session_state.score / total_len) * 100, 1) if total_len > 0 else 0
 
-    # 【追加】目標達成に必要な安打数の逆算ロジック
-    required_hits = math.ceil(target_avg * at_bats)
+        if st.session_state.is_mock_exam:
+            st.header("🎓 本番模擬試験 結果発表")
+            if accuracy >= 70.0:
+                st.balloons()
+                st.markdown(f"""
+                    <div class="pass-banner">
+                        <h2>🎉 合格圏内クリア！おめでとうございます！</h2>
+                        <p style="font-size: 1.2em;">得点率: <b>{accuracy}%</b>（合格基準 70%以上）</p>
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div class="fail-banner">
+                        <h2>💪 合格ラインまであと一歩！</h2>
+                        <p style="font-size: 1.2em;">得点率: <b>{accuracy}%</b>（合格基準 70%以上）</p>
+                    </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.balloons()
+            st.header("🎊 お疲れ様でした！結果発表")
 
-    if batting_avg >= target_avg:
-        st.success("🎉 すでに目標の打率を達成しています！お見事です！")
-    else:
-        needed = required_hits - hits
-        st.info(
-            f"🎯 目標の打率 ({target_avg:.3f}) まであと **{needed} 本**"
-            " のヒットが必要です！"
-        )
-else:
-    st.warning("打数を1以上にしてください。")
+        st.metric(label="獲得スコア / 正答率", value=f"{st.session_state.score} / {total_len} 問正解 ({accuracy}%)")
+
+        if not st.session_state.get("history_recorded", False):
+            attempt_num = len(st.session_state.history) + 1
+            st.session_state.history.append({"回数": f"{attempt_num}回目", "正答率(%)": accuracy})
+            st.session_state.study_dates.add(str(date.today()))
+            st.session_state.history_recorded = True
+
+        st.markdown("---")
+        st.subheader("📋 今回の全問レビュー（答え合わせ）")
+        for idx, log in enumerate(st.session_state.quiz_results_log):
+            status = "🟢 正解" if log["is_correct"] else "🔴 不正解"
+            with st.expander(f"第{idx+1}問: {status} - {log['question'][:30]}..."):
+                st.write(f"**問題:** {log['question']}")
+                st.write(f"あなたの回答: {log['user_answer']}")
+                st.write(f"正しい答え: **{log['correct_answer']}**")
+                st.info(f"解説: {log['explanation']}")
+
+        st.write("")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🏠 ホーム画面に戻る", type="primary", use_container_width=True):
+                st.session_state.app_mode = "home"
+                st.session_state.history_recorded = False
+                st.rerun()
+        with col2:
+            wrong_cnt = len(st.session_state.wrong_questions)
+            if st.button(f"❌ 間違い復習 ({wrong_cnt}問)", disabled=(wrong_cnt == 0), use_container_width=True):
+                start_quiz(st.session_state.wrong_questions, "🔄 間違い復習モード", is_mock_exam=False)
+                st.rerun()
